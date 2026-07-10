@@ -334,6 +334,7 @@
     </div>
     <div class="util-row">
       <button class="btn btn-ghost" id="copyUnfinishedBtn">↻ Salin Tugas Belum Selesai</button>
+      <button class="btn btn-ghost" id="reloadBtn">⟳ Muat Ulang Data</button>
     </div>
     <div id="syncStatus"><span class="dot"></span><span id="syncStatusText">Sinkron Google Sheets: belum diatur</span></div>
 
@@ -544,8 +545,19 @@ async function loadTasks(date){
   }catch(e){ return []; }
 }
 async function saveTasks(date, tasks){
-  try{ await window.storage.set('tasks:'+date, JSON.stringify(tasks), false); }
-  catch(e){ console.error('Gagal menyimpan tugas', e); }
+  try{
+    const result = await window.storage.set('tasks:'+date, JSON.stringify(tasks), false);
+    if(!result){
+      console.error('Gagal menyimpan tugas: hasil kosong dari storage');
+      alert('Gagal menyimpan data secara lokal. Coba tambahkan lagi dalam beberapa detik.');
+      return false;
+    }
+    return true;
+  }catch(e){
+    console.error('Gagal menyimpan tugas', e);
+    alert('Gagal menyimpan data secara lokal: '+(e && e.message ? e.message : e));
+    return false;
+  }
 }
 async function loadTemplates(){
   try{
@@ -780,28 +792,40 @@ function applyAction(t, act){
 }
 
 async function handleAction(id, act){
+  let t = null;
+  let deleted = false;
   if(act === 'delete'){
-    tasksCache = tasksCache.filter(function(t){ return t.id!==id; });
-    syncTask({id:id}, currentDate, 'delete');
+    tasksCache = tasksCache.filter(function(x){ return x.id!==id; });
+    deleted = true;
   } else {
-    const t = tasksCache.find(function(t){ return t.id===id; });
-    if(t){ applyAction(t, act); syncTask(t, currentDate, 'upsert'); }
+    t = tasksCache.find(function(x){ return x.id===id; });
+    if(t) applyAction(t, act);
   }
-  await saveTasks(currentDate, tasksCache);
+  const saved = await saveTasks(currentDate, tasksCache);
+  if(saved){
+    if(deleted) syncTask({id:id}, currentDate, 'delete');
+    else if(t) syncTask(t, currentDate, 'upsert');
+  }
   renderProgress();
   renderTimeline();
 }
 
 async function handleActionForDate(dateStr, id, act){
   let list = await loadTasks(dateStr);
+  let t = null;
+  let deleted = false;
   if(act === 'delete'){
-    list = list.filter(function(t){ return t.id!==id; });
-    syncTask({id:id}, dateStr, 'delete');
+    list = list.filter(function(x){ return x.id!==id; });
+    deleted = true;
   } else {
-    const t = list.find(function(t){ return t.id===id; });
-    if(t){ applyAction(t, act); syncTask(t, dateStr, 'upsert'); }
+    t = list.find(function(x){ return x.id===id; });
+    if(t) applyAction(t, act);
   }
-  await saveTasks(dateStr, list);
+  const saved = await saveTasks(dateStr, list);
+  if(saved){
+    if(deleted) syncTask({id:id}, dateStr, 'delete');
+    else if(t) syncTask(t, dateStr, 'upsert');
+  }
   if(dateStr === currentDate){
     tasksCache = list;
     renderProgress();
@@ -879,8 +903,8 @@ async function addTask(){
   if(!name){ document.getElementById('inName').focus(); return; }
   const newTask = {id:uid(), time:time, name:name, category:category, note:note, status:'progress', priority:priority, deadline:deadline, elapsed:0, timerStart:null};
   tasksCache.push(newTask);
-  await saveTasks(currentDate, tasksCache);
-  syncTask(newTask, currentDate, 'upsert');
+  const saved = await saveTasks(currentDate, tasksCache);
+  if(saved) syncTask(newTask, currentDate, 'upsert');
   document.getElementById('inName').value = '';
   document.getElementById('inNote').value = '';
   document.getElementById('inTime').value = '';
@@ -932,20 +956,22 @@ async function bulkAddDailyTemplates(){
   if(dailyTpls.length===0){ alert('Belum ada tugas rutin harian tersimpan.'); return; }
   const currentTasks = await loadTasks(currentDate);
   const existingNames = new Set(currentTasks.map(function(t){ return t.name; }));
-  let added = 0;
+  const newTasks = [];
   dailyTpls.forEach(function(tpl){
     if(!existingNames.has(tpl.name)){
       const newTask = {id:uid(), time:'', name:tpl.name, category:tpl.category, note:'', status:'progress', priority:'sedang', deadline:'', elapsed:0, timerStart:null};
       currentTasks.push(newTask);
-      syncTask(newTask, currentDate, 'upsert');
-      added++;
+      newTasks.push(newTask);
     }
   });
-  if(added>0){
-    await saveTasks(currentDate, currentTasks);
-    if(currentDate === document.getElementById('datePicker').value) tasksCache = currentTasks;
-    render();
-    alert(added+' tugas rutin harian ditambahkan ke '+fmtDateLabel(currentDate)+'.');
+  if(newTasks.length>0){
+    const saved = await saveTasks(currentDate, currentTasks);
+    if(saved){
+      newTasks.forEach(function(t){ syncTask(t, currentDate, 'upsert'); });
+      tasksCache = currentTasks;
+      render();
+      alert(newTasks.length+' tugas rutin harian ditambahkan ke '+fmtDateLabel(currentDate)+'.');
+    }
   } else {
     alert('Semua tugas rutin harian sudah ada di hari ini.');
   }
@@ -964,20 +990,22 @@ async function bulkAddMonthlyTemplates(){
     list.forEach(function(t){ existingNamesThisMonth.add(t.name); });
   }
   const currentTasks = await loadTasks(currentDate);
-  let added = 0;
+  const newTasks = [];
   monthlyTpls.forEach(function(tpl){
     if(!existingNamesThisMonth.has(tpl.name)){
       const newTask = {id:uid(), time:'', name:tpl.name, category:tpl.category, note:'', status:'progress', priority:'sedang', deadline:'', elapsed:0, timerStart:null};
       currentTasks.push(newTask);
-      syncTask(newTask, currentDate, 'upsert');
-      added++;
+      newTasks.push(newTask);
     }
   });
-  if(added>0){
-    await saveTasks(currentDate, currentTasks);
-    tasksCache = currentTasks;
-    render();
-    alert(added+' tugas rutin bulanan ditambahkan ke '+fmtDateLabel(currentDate)+'.');
+  if(newTasks.length>0){
+    const saved = await saveTasks(currentDate, currentTasks);
+    if(saved){
+      newTasks.forEach(function(t){ syncTask(t, currentDate, 'upsert'); });
+      tasksCache = currentTasks;
+      render();
+      alert(newTasks.length+' tugas rutin bulanan ditambahkan ke '+fmtDateLabel(currentDate)+'.');
+    }
   } else {
     alert('Semua tugas rutin bulanan sudah tercatat bulan ini.');
   }
@@ -996,19 +1024,21 @@ async function copyUnfinishedFromPrevious(){
   const unfinished = prevList.filter(function(t){ return t.status==='progress' || t.status==='postponed'; });
   if(unfinished.length===0){ alert('Tidak ada tugas belum selesai di '+fmtDateLabel(prevDate)+'.'); return; }
   const existingNames = new Set(tasksCache.map(function(t){ return t.name; }));
-  let added = 0;
+  const newTasks = [];
   unfinished.forEach(function(t){
     if(!existingNames.has(t.name)){
       const newTask = {id:uid(), time:'', name:t.name, category:t.category, note:t.note||'', status:'progress', priority:t.priority||'sedang', deadline:t.deadline||'', elapsed:0, timerStart:null};
       tasksCache.push(newTask);
-      syncTask(newTask, currentDate, 'upsert');
-      added++;
+      newTasks.push(newTask);
     }
   });
-  if(added>0){
-    await saveTasks(currentDate, tasksCache);
-    render();
-    alert(added+' tugas belum selesai dari '+fmtDateLabel(prevDate)+' disalin ke hari ini.');
+  if(newTasks.length>0){
+    const saved = await saveTasks(currentDate, tasksCache);
+    if(saved){
+      newTasks.forEach(function(t){ syncTask(t, currentDate, 'upsert'); });
+      render();
+      alert(newTasks.length+' tugas belum selesai dari '+fmtDateLabel(prevDate)+' disalin ke hari ini.');
+    }
   } else {
     alert('Semua tugas belum selesai sudah ada di hari ini.');
   }
@@ -1083,6 +1113,7 @@ document.getElementById('clearSearchBtn').addEventListener('click', clearSearch)
 document.getElementById('searchInput').addEventListener('keydown', function(e){ if(e.key==='Enter') runSearch(); });
 document.getElementById('searchInput').addEventListener('input', function(){ if(document.getElementById('searchInput').value.trim()===''){ clearSearch(); } });
 document.getElementById('copyUnfinishedBtn').addEventListener('click', copyUnfinishedFromPrevious);
+document.getElementById('reloadBtn').addEventListener('click', function(){ render(); });
 document.getElementById('exportCsvBtn').addEventListener('click', exportAllCSV);
 document.getElementById('statsRefreshBtn').addEventListener('click', renderStats);
 document.getElementById('copyCodeBtn').addEventListener('click', function(){
