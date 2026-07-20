@@ -150,6 +150,33 @@
   .history-entry .h-time{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:var(--ink-soft);}
   .history-entry .h-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--ink-soft);}
   .history-entry .h-note{font-size:12px;color:var(--ink-soft);font-style:italic;margin-top:4px;}
+  .history-entry{cursor:pointer;transition:transform .1s,box-shadow .15s;}
+  .history-entry:hover{box-shadow:0 2px 8px rgba(27,36,48,.08);}
+  .history-entry:active{transform:scale(.99);}
+  .history-entry .h-chevron{margin-left:auto;color:var(--ink-soft);font-size:14px;flex-shrink:0;align-self:center;}
+
+  /* --- Modal detail riwayat --- */
+  .modal-overlay{position:fixed;inset:0;background:rgba(27,36,48,.45);display:none;align-items:flex-end;justify-content:center;z-index:200;padding:0;}
+  .modal-overlay.open{display:flex;}
+  .modal-sheet{background:var(--paper-card);width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:22px 22px 26px;max-height:86vh;overflow-y:auto;box-shadow:0 -8px 30px rgba(27,36,48,.25);animation:modalUp .18s ease-out;}
+  @keyframes modalUp{from{transform:translateY(24px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  @media (min-width:600px){
+    .modal-overlay{align-items:center;}
+    .modal-sheet{border-radius:16px;}
+    @keyframes modalUp{from{transform:translateY(10px) scale(.98);opacity:0;}to{transform:translateY(0) scale(1);opacity:1;}}
+  }
+  .modal-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px;}
+  .modal-title{font-family:'Fraunces',serif;font-weight:600;font-size:19px;line-height:1.35;margin:0;}
+  .modal-close{background:none;border:1px solid var(--line);border-radius:8px;width:32px;height:32px;flex-shrink:0;cursor:pointer;font-size:16px;color:var(--ink-soft);display:flex;align-items:center;justify-content:center;}
+  .modal-close:hover{background:var(--grey-soft);}
+  .modal-badges{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 18px;}
+  .modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;margin-bottom:16px;}
+  .modal-field{min-width:0;}
+  .modal-field .f-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:4px;}
+  .modal-field .f-value{font-size:14px;font-weight:600;color:var(--ink);word-break:break-word;}
+  .modal-note-box{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px;color:var(--ink-soft);font-style:italic;margin-bottom:4px;}
+  .modal-note-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:6px;}
+  @media (max-width:480px){ .modal-grid{grid-template-columns:1fr 1fr;} }
 
   @media (max-width:480px){
     h1{font-size:26px;} select{flex:1 1 100%;} .form-row input[type=time], .form-row input[type=date]{flex:1 1 100%;}
@@ -423,6 +450,18 @@ function doPost(e) {
   </div>
 
   <footer class="hint">database: Google Sheets · terhubung lewat Apps Script</footer>
+</div>
+
+<div class="modal-overlay" id="historyModalOverlay">
+  <div class="modal-sheet" id="historyModalSheet">
+    <div class="modal-top">
+      <h3 class="modal-title" id="modalTaskName"></h3>
+      <button class="modal-close" id="modalCloseBtn" aria-label="Tutup">✕</button>
+    </div>
+    <div class="modal-badges" id="modalBadges"></div>
+    <div class="modal-grid" id="modalGrid"></div>
+    <div id="modalNoteWrap"></div>
+  </div>
 </div>
 
 <script>
@@ -842,35 +881,75 @@ function renderHistory(){
     const group = document.createElement('div');
     group.className = 'history-group';
     const items = groups[dateStr];
-    let itemsHtml = '';
+    const header = document.createElement('div');
+    header.className = 'history-date-header';
+    header.innerHTML =
+      '<span class="d-main">'+fmtDateLabel(dateStr)+'</span>'+
+      '<span class="d-count">'+items.length+' selesai</span>';
+    group.appendChild(header);
+
     items.forEach(function(t){
       const elapsedNum = parseFloat(t.elapsed)||0;
-      itemsHtml +=
-        '<div class="history-entry">'+
-          '<div class="h-dot"></div>'+
-          '<div class="h-body">'+
-            '<div class="h-top">'+
-              '<span class="h-name">'+escapeHtml(t.name)+'</span>'+
-              (t.time ? '<span class="h-time">'+t.time+'</span>' : '')+
-            '</div>'+
-            '<div class="h-meta">'+
-              '<span>'+escapeHtml(t.category)+'</span>'+
-              '<span>·</span>'+
-              '<span class="priority-badge '+(t.priority||'sedang')+'">'+PRIORITY[t.priority||'sedang'].label+'</span>'+
-              (elapsedNum>0 ? '<span>· ⏱ '+formatDuration(elapsedNum)+'</span>' : '')+
-            '</div>'+
-            (t.note ? '<div class="h-note">'+escapeHtml(t.note)+'</div>' : '')+
+      const el = document.createElement('div');
+      el.className = 'history-entry';
+      el.tabIndex = 0;
+      el.innerHTML =
+        '<div class="h-dot"></div>'+
+        '<div class="h-body">'+
+          '<div class="h-top">'+
+            '<span class="h-name">'+escapeHtml(t.name)+'</span>'+
+            (t.time ? '<span class="h-time">'+t.time+'</span>' : '')+
           '</div>'+
-        '</div>';
+          '<div class="h-meta">'+
+            '<span>'+escapeHtml(t.category)+'</span>'+
+            '<span>·</span>'+
+            '<span class="priority-badge '+(t.priority||'sedang')+'">'+PRIORITY[t.priority||'sedang'].label+'</span>'+
+            (elapsedNum>0 ? '<span>· ⏱ '+formatDuration(elapsedNum)+'</span>' : '')+
+          '</div>'+
+          (t.note ? '<div class="h-note">'+escapeHtml(t.note)+'</div>' : '')+
+        '</div>'+
+        '<div class="h-chevron">›</div>';
+      el.addEventListener('click', function(){ openHistoryModal(t); });
+      el.addEventListener('keydown', function(e){ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); openHistoryModal(t); } });
+      group.appendChild(el);
     });
-    group.innerHTML =
-      '<div class="history-date-header">'+
-        '<span class="d-main">'+fmtDateLabel(dateStr)+'</span>'+
-        '<span class="d-count">'+items.length+' selesai</span>'+
-      '</div>'+
-      itemsHtml;
     listWrap.appendChild(group);
   });
+}
+
+/* ---------- MODAL DETAIL RIWAYAT ---------- */
+function openHistoryModal(t){
+  const elapsedNum = parseFloat(t.elapsed)||0;
+  document.getElementById('modalTaskName').textContent = t.name || '(Tanpa nama)';
+
+  const statusInfo = STATUS[t.status] || STATUS.done;
+  const priority = t.priority || 'sedang';
+  document.getElementById('modalBadges').innerHTML =
+    '<span class="status-badge '+t.status+'">'+statusInfo.label+'</span>'+
+    '<span class="priority-badge '+priority+'">'+PRIORITY[priority].label+'</span>'+
+    '<span class="entry-cat" style="align-self:center;">'+escapeHtml(t.category)+'</span>';
+
+  const fields = [
+    ['Tanggal Dikerjakan', fmtDateLabel(t.date)],
+    ['Waktu', t.time ? t.time : '—'],
+    ['Durasi Pengerjaan', elapsedNum>0 ? formatDuration(elapsedNum) : '—'],
+    ['Tenggat', t.deadline ? fmtDateLabel(t.deadline) : '—']
+  ];
+  document.getElementById('modalGrid').innerHTML = fields.map(function(f){
+    return '<div class="modal-field"><div class="f-label">'+f[0]+'</div><div class="f-value">'+escapeHtml(f[1])+'</div></div>';
+  }).join('');
+
+  const noteWrap = document.getElementById('modalNoteWrap');
+  noteWrap.innerHTML = t.note
+    ? '<div class="modal-note-label">Catatan</div><div class="modal-note-box">'+escapeHtml(t.note)+'</div>'
+    : '';
+
+  document.getElementById('historyModalOverlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeHistoryModal(){
+  document.getElementById('historyModalOverlay').classList.remove('open');
+  document.body.style.overflow = '';
 }
 
 /* ---------- INPUT AKTIVITAS ---------- */
@@ -1066,6 +1145,13 @@ document.getElementById('settingsSaveBtn').addEventListener('click', async funct
   await refreshFromSheets();
 });
 document.getElementById('syncNowBtn').addEventListener('click', refreshFromSheets);
+document.getElementById('modalCloseBtn').addEventListener('click', closeHistoryModal);
+document.getElementById('historyModalOverlay').addEventListener('click', function(e){
+  if(e.target === document.getElementById('historyModalOverlay')) closeHistoryModal();
+});
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && document.getElementById('historyModalOverlay').classList.contains('open')) closeHistoryModal();
+});
 
 setInterval(function(){
   document.querySelectorAll('.entry-duration').forEach(function(el){
